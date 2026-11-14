@@ -61,6 +61,16 @@ python test_douyin_gui.py
 
 测试覆盖链接解析、内嵌 JSON 解析、作品对象定位、反爬识别、端到端模拟下载以及 GUI 冒烟流程。测试使用 `FakeSession`，不会访问真实抖音服务。
 
+## 图标
+
+仓库不依赖二进制图标文件。需要应用图标时，运行：
+
+```powershell
+python make_github_icon.py
+```
+
+脚本会生成 `app.ico`、`app_icon_github.png` 和 `app_icon_github_transparent.png`。如果目录中已有自己设计的 `app_icon_github.png`，脚本会沿用该原图；否则会绘制深灰底、白色叠层图片与音符的 GitHub 风图标。ICO 包含 16、32、48、64、128、256 像素尺寸。
+
 ## 文件说明
 
 | 文件 | 用途 |
@@ -68,13 +78,8 @@ python test_douyin_gui.py
 | `douyin_gui.py` | GUI 主程序与提取引擎 |
 | `test_douyin_gui.py` | 自动化测试脚本 |
 | `launch.vbs` | Windows 静默启动器 |
-| `app.ico` | 当前应用图标，多尺寸 ICO |
-| `app_icon_github.png` | 当前 GitHub 风格图标原图 |
-| `app_icon_github_transparent.png` | 当前透明圆角图标 |
-| `make_github_icon.py` | 当前图标生成脚本 |
-| `app_icon.png` | 旧版霓虹图标原图，保留用于回退 |
-| `app_icon_transparent.png` | 旧版透明圆角图标 |
-| `clean_icon.py` | 旧版图标生成脚本 |
+| `make_github_icon.py` | 自包含图标生成脚本，可生成多尺寸 ICO |
+| `clean_icon.py` | 旧版图标的可选处理脚本，需要自行提供旧版 PNG 源图 |
 
 ## 免责声明
 
