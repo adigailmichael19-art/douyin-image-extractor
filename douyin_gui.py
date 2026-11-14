@@ -456,7 +456,7 @@ class App(tk.Tk):
             return
         out_dir = self.out_var.get().strip()
         if not out_dir:
-            messagebox.showerror(APP_TITLE, "请选择输出目录")
+            messagebox.showwarning(APP_TITLE, "请选择输出目录")
             return
         try:
             os.makedirs(out_dir, exist_ok=True)
