@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">抖音图文提取器</string>
+    <string name="subtitle">批量提取图文原图与视频，仅供个人学习使用</string>
+    <string name="links_hint">粘贴链接或分享口令，每行一个</string>
+    <string name="cookie_hint">Cookie（可选，遇风控时填写）</string>
+    <string name="download_video">视频作品自动下载 MP4</string>
+    <string name="extract">开始提取</string>
+    <string name="stop">停止</string>
+    <string name="to_pdf">图片转 PDF</string>
+    <string name="clear_log">清空日志</string>
+</resources>
