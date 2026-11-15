@@ -60,16 +60,16 @@ public final class Extractor {
                     + "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
     private static final Pattern URL_PATTERN =
-            Pattern.compile("https?://[^\\\\s，。；、“”‘’）)】]+");
+            Pattern.compile("https?://[^，。；、“”‘’）)】]+");
     private static final Pattern ID_PATTERN =
-            Pattern.compile("(?:/note/|/video/|modal_id=|aweme_id=)(\\\\d{10,})");
+            Pattern.compile("(?:/note/|/video/|modal_id=|aweme_id=)([0-9]{10,})");
     private static final Pattern ROUTER_PATTERN =
-            Pattern.compile("window\\\\._ROUTER_DATA\\\\s*=\\\\s*(\\\\{.*?})\\\\s*;?\\\\s*</script>",
+            Pattern.compile("window[.]_ROUTER_DATA[ ]*=[ ]*([{].*?})[ ]*;?[ ]*</script>",
                     Pattern.DOTALL);
     private static final Pattern RENDER_PATTERN =
             Pattern.compile("id=\"RENDER_DATA\"[^>]*>(.*?)</script>", Pattern.DOTALL);
     private static final Pattern EXTENSION_PATTERN =
-            Pattern.compile("\\\\.(jpe?g|png|webp|heic)", Pattern.CASE_INSENSITIVE);
+            Pattern.compile("[.](jpe?g|png|webp|heic)", Pattern.CASE_INSENSITIVE);
 
     private static final String[] ANTIBOT_MARKERS = {
             "acrawler", "verify", "captcha", "验证码", "安全验证", "访问过于频繁", "滑块"
@@ -278,9 +278,10 @@ public final class Extractor {
         meta.put("desc", result.desc);
         meta.put("author", result.author);
         meta.put("source_url", result.sourceUrl);
+        String nl = String.valueOf((char) 10);
         writeText(new File(saveDir, "info.json"), meta.toString(2));
         writeText(new File(saveDir, "caption.txt"),
-                "作者: " + result.author + "\n文案: " + result.desc + "\n链接: " + result.sourceUrl + "\n");
+                "作者: " + result.author + nl + "文案: " + result.desc + nl + "链接: " + result.sourceUrl + nl);
 
         if ("note".equals(result.kind)) {
             logger.log("图文笔记共 " + result.imageUrls.size() + " 张图片, 开始下载...");
@@ -438,18 +439,29 @@ public final class Extractor {
     }
 
     static String safeName(String name, int limit) {
-        String cleaned = (name == null ? "" : name).trim()
-                .replaceAll("[\\\\/:*?\"<>|\\\\r\\\\n\\\\t]", "_");
-        if (cleaned.isEmpty()) {
-            cleaned = "douyin";
+        String source = (name == null ? "" : name).trim();
+        StringBuilder cleaned = new StringBuilder();
+        int[] illegalCodePoints = {92, 47, 58, 42, 63, 34, 60, 62, 124, 13, 10, 9};
+        for (char c : source.toCharArray()) {
+            boolean illegal = false;
+            for (int code : illegalCodePoints) {
+                if (c == code) {
+                    illegal = true;
+                    break;
+                }
+            }
+            cleaned.append(illegal ? '_' : c);
+        }
+        if (cleaned.length() == 0) {
+            cleaned.append("douyin");
         }
         if (cleaned.length() > limit) {
-            cleaned = cleaned.substring(0, limit);
+            cleaned.delete(limit, cleaned.length());
         }
-        while (cleaned.endsWith(".")) {
-            cleaned = cleaned.substring(0, cleaned.length() - 1);
+        while (cleaned.length() > 0 && cleaned.charAt(cleaned.length() - 1) == '.') {
+            cleaned.deleteCharAt(cleaned.length() - 1);
         }
-        return cleaned.isEmpty() ? "douyin" : cleaned;
+        return cleaned.length() == 0 ? "douyin" : cleaned.toString();
     }
 
     private void checkStopped() throws InterruptedException {
