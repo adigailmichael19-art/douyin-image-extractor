@@ -5,12 +5,15 @@
 import json
 import os
 import queue
+import re
 import shutil
 import sys
 import tempfile
 import threading
 import time
 from urllib.parse import quote
+
+from PIL import Image
 
 import douyin_gui as dg
 
@@ -181,7 +184,103 @@ def test_end_to_end():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-# ---------- 3. GUI 冒烟 ----------
+# ---------- 3. 图片转 PDF ----------
+def test_pdf_conversion():
+    tmp = tempfile.mkdtemp(prefix="pdf_test_")
+    try:
+        jpg = os.path.join(tmp, "one.jpg")
+        png = os.path.join(tmp, "two.png")
+        bmp = os.path.join(tmp, "three.bmp")
+        Image.new("RGB", (32, 24), (200, 30, 40)).save(jpg)
+        Image.new("RGBA", (20, 20), (0, 0, 0, 0)).save(png)
+        Image.new("L", (16, 16), 128).save(bmp)
+
+        output = os.path.join(tmp, "nested", "combined.pdf")
+        events = []
+        result = dg.images_to_pdf([jpg, png, bmp], output,
+                                  progress=lambda c, t: events.append((c, t)))
+        check("PDF 返回绝对路径", result == os.path.abspath(output))
+        check("PDF 文件生成", os.path.isfile(output))
+        with open(output, "rb") as f:
+            data = f.read()
+        check("PDF 文件头正确", data.startswith(b"%PDF-"))
+        pages = len(re.findall(rb"/Type\s*/Page(?!s)\b", data))
+        check("PDF 多页数量正确", pages == 3)
+        check("PDF 转换进度完整", events == [(1, 3), (2, 3), (3, 3)])
+        check("PDF 无残留临时文件", not os.path.exists(output + ".part"))
+
+        with Image.open(png) as source:
+            flattened = dg._image_to_rgb(source)
+        check("透明图片转 RGB 白底",
+              flattened.mode == "RGB" and flattened.getpixel((1, 1)) == (255, 255, 255))
+        flattened.close()
+
+        exif_path = os.path.join(tmp, "oriented.jpg")
+        exif = Image.Exif()
+        exif[274] = 6
+        Image.new("RGB", (40, 20), (10, 20, 30)).save(exif_path, exif=exif)
+        with Image.open(exif_path) as source:
+            oriented = dg._image_to_rgb(source)
+        check("EXIF 方向自动修正", oriented.size == (20, 40))
+        oriented.close()
+
+        bad = os.path.join(tmp, "bad.txt")
+        with open(bad, "w", encoding="utf-8") as f:
+            f.write("not an image")
+        bad_pdf = os.path.join(tmp, "bad.pdf")
+        try:
+            dg.images_to_pdf([bad], bad_pdf)
+            check("损坏图片抛出可读异常", False)
+        except dg.ExtractError as e:
+            check("损坏图片抛出可读异常", "图片转 PDF 失败" in str(e))
+        check("失败时不留 PDF 或临时文件",
+              not os.path.exists(bad_pdf) and not os.path.exists(bad_pdf + ".part"))
+
+        try:
+            dg.images_to_pdf([], os.path.join(tmp, "empty.pdf"))
+            check("空图片列表被拒绝", False)
+        except dg.ExtractError:
+            check("空图片列表被拒绝", True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_pdf_worker():
+    tmp = tempfile.mkdtemp(prefix="pdf_worker_test_")
+    try:
+        paths = []
+        for index in range(2):
+            path = os.path.join(tmp, f"{index}.png")
+            Image.new("RGB", (12, 12), (index * 100, 20, 30)).save(path)
+            paths.append(path)
+        output = os.path.join(tmp, "worker.pdf")
+        msg_q = queue.Queue()
+        dg.pdf_worker(paths, output, msg_q)
+        messages = []
+        while not msg_q.empty():
+            messages.append(msg_q.get_nowait())
+        done = [m for m in messages if m[0] == "pdf_done"]
+        progress = [m for m in messages if m[0] == "progress"]
+        check("PDF 后台任务成功消息", len(done) == 1 and done[0][1] is True)
+        check("PDF 后台任务进度消息", progress and progress[-1][1:] == (2, 2))
+        check("PDF 后台任务生成文件", os.path.isfile(output))
+
+        bad = os.path.join(tmp, "invalid.png")
+        with open(bad, "wb") as f:
+            f.write(b"invalid")
+        failed_output = os.path.join(tmp, "failed.pdf")
+        dg.pdf_worker([bad], failed_output, msg_q)
+        failed_messages = []
+        while not msg_q.empty():
+            failed_messages.append(msg_q.get_nowait())
+        failed_done = [m for m in failed_messages if m[0] == "pdf_done"]
+        check("PDF 后台异常可读返回", len(failed_done) == 1 and failed_done[0][1] is False)
+        check("PDF 后台异常无残缺文件", not os.path.exists(failed_output + ".part"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------- 4. GUI 冒烟 ----------
 def test_gui():
     try:
         app = dg.App()
@@ -208,6 +307,22 @@ def test_gui():
         app.update()
         check("GUI 停止按钮安全调用", True)
 
+        check("GUI 图片转 PDF 按钮存在",
+              hasattr(app, "pdf_btn") and app.pdf_btn.cget("text") == "图片转 PDF")
+        original_info = dg.messagebox.showinfo
+        try:
+            dg.messagebox.showinfo = lambda *args, **kwargs: None
+            app.msg_q.put(("progress", 2, 2))
+            app.msg_q.put(("pdf_done", True, "demo.pdf"))
+            app._poll_queue()
+            app.update()
+            check("GUI PDF 队列消息处理",
+                  app.status_var.get() == "PDF 转换完成"
+                  and float(app.progress["value"]) == 100.0
+                  and str(app.pdf_btn["state"]) == "normal")
+        finally:
+            dg.messagebox.showinfo = original_info
+
         app.destroy()
         try:
             exists_after = app.winfo_exists()
@@ -227,6 +342,8 @@ if __name__ == "__main__":
     test_find_aweme()
     test_antibot()
     test_end_to_end()
+    test_pdf_conversion()
+    test_pdf_worker()
     test_gui()
     print("=" * 60)
     print(f"结果: {PASS} 通过, {FAIL} 失败")

@@ -5,7 +5,8 @@
 - Tkinter 图形界面, 支持多链接批量提取图文原图 / 无水印视频
 - 后台线程执行, 实时日志与进度, 可随时停止
 - 支持可选 Cookie 输入以降低风控概率
-依赖: pip install requests
+- 支持多张图片合并为 PDF, 自动处理透明背景与 EXIF 方向
+依赖: pip install -r requirements.txt
 """
 
 import json
@@ -19,12 +20,13 @@ from datetime import datetime
 from urllib.parse import unquote
 
 import requests
+from PIL import Image, ImageOps
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
 APP_TITLE = "抖音图文提取器"
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 
 UA_MOBILE = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
@@ -189,6 +191,55 @@ def download_file(url, path, session, stop_event, log, retries=3):
     return False
 
 
+def _image_to_rgb(source):
+    """按 EXIF 修正方向，并把透明图片合成到白色背景。"""
+    oriented = ImageOps.exif_transpose(source)
+    if oriented.mode in ("RGBA", "LA") or "transparency" in oriented.info:
+        rgba = oriented.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        background.alpha_composite(rgba)
+        return background.convert("RGB")
+    return oriented.convert("RGB")
+
+
+def images_to_pdf(image_paths, output_pdf, progress=None):
+    """按给定顺序把多张图片合并为一个 PDF，返回输出绝对路径。"""
+    paths = list(image_paths)
+    if not paths:
+        raise ExtractError("请选择至少一张图片")
+    if not output_pdf:
+        raise ExtractError("请选择 PDF 保存位置")
+
+    output_pdf = os.path.abspath(os.fspath(output_pdf))
+    os.makedirs(os.path.dirname(output_pdf), exist_ok=True)
+    part_path = output_pdf + ".part"
+    frames = []
+    try:
+        total = len(paths)
+        for index, path in enumerate(paths, 1):
+            with Image.open(path) as source:
+                frames.append(_image_to_rgb(source))
+            if progress:
+                progress(index, total)
+
+        frames[0].save(part_path, format="PDF", save_all=True,
+                       append_images=frames[1:], resolution=150.0)
+        os.replace(part_path, output_pdf)
+        return output_pdf
+    except Exception as e:
+        if os.path.exists(part_path):
+            try:
+                os.remove(part_path)
+            except OSError:
+                pass
+        if isinstance(e, ExtractError):
+            raise
+        raise ExtractError(f"图片转 PDF 失败: {e}") from e
+    finally:
+        for frame in frames:
+            frame.close()
+
+
 def process_one(raw_text, out_root, want_video, session, log, stop_event):
     url = extract_first_url(raw_text)
     log(f"链接: {url}")
@@ -286,6 +337,24 @@ def worker_main(link_lines, out_root, want_video, cookie, msg_q, stop_event):
     msg_q.put(("progress", total, total))
     msg_q.put(("status", "任务结束"))
     msg_q.put(("done", fail))
+
+
+def pdf_worker(image_paths, output_pdf, msg_q):
+    """后台转换图片，避免文件较多时阻塞 GUI。"""
+    try:
+        total = len(image_paths)
+        msg_q.put(("status", f"正在转换 {total} 张图片"))
+        msg_q.put(("log", f"开始图片转 PDF, 共 {total} 张"))
+
+        def progress(current, total_n):
+            msg_q.put(("progress", current, total_n))
+
+        result = images_to_pdf(image_paths, output_pdf, progress=progress)
+        msg_q.put(("log", f"PDF 完成 -> {result}"))
+        msg_q.put(("pdf_done", True, result))
+    except Exception as e:
+        msg_q.put(("log", f"[失败] 图片转 PDF: {e}"))
+        msg_q.put(("pdf_done", False, str(e)))
 
 
 # ============================ GUI ============================
@@ -393,6 +462,9 @@ class App(tk.Tk):
             side="left")
         ttk.Button(btn_frame, text="清空日志", command=self._clear_log).pack(
             side="left", padx=8)
+        self.pdf_btn = ttk.Button(btn_frame, text="图片转 PDF",
+                                  command=self._convert_images_to_pdf)
+        self.pdf_btn.pack(side="left")
 
         # 进度
         prog_frame = ttk.Frame(root)
@@ -477,6 +549,38 @@ class App(tk.Tk):
             daemon=True)
         self.worker.start()
 
+    def _convert_images_to_pdf(self):
+        paths = filedialog.askopenfilenames(
+            title="选择要合并的图片",
+            filetypes=[
+                ("图片文件", "*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff"),
+                ("所有文件", "*.*"),
+            ])
+        if not paths:
+            return
+        output_pdf = filedialog.asksaveasfilename(
+            title="保存 PDF",
+            defaultextension=".pdf",
+            initialfile="图片合集.pdf",
+            filetypes=[("PDF 文件", "*.pdf")])
+        if not output_pdf:
+            return
+
+        self.pdf_btn.config(state="disabled")
+        self.progress.config(value=0)
+        threading.Thread(target=pdf_worker, args=(paths, output_pdf, self.msg_q),
+                         daemon=True).start()
+
+    def _on_pdf_done(self, success, result):
+        self.pdf_btn.config(state="normal")
+        if success:
+            self.progress.config(value=100)
+            self.status_var.set("PDF 转换完成")
+            messagebox.showinfo(APP_TITLE, f"PDF 已保存:\n{result}")
+        else:
+            self.status_var.set("PDF 转换失败")
+            messagebox.showerror(APP_TITLE, f"图片转 PDF 失败:\n{result}")
+
     def _stop(self):
         if self.worker and self.worker.is_alive():
             self.stop_event.set()
@@ -512,18 +616,22 @@ class App(tk.Tk):
     def _poll_queue(self):
         try:
             while True:
-                kind, payload = self.msg_q.get_nowait()
+                message = self.msg_q.get_nowait()
+                kind = message[0]
                 if kind == "log":
+                    payload = message[1]
                     is_err = payload.startswith("[失败]") or "失败" in payload[:8]
                     self._append_log(payload, error=is_err)
                 elif kind == "status":
-                    self.status_var.set(payload)
+                    self.status_var.set(message[1])
                 elif kind == "progress":
-                    current, total_n = payload
+                    _, current, total_n = message
                     self.progress.config(value=current / total_n * 100)
                 elif kind == "done":
-                    fail = payload
-                    self._on_task_done(fail)
+                    self._on_task_done(message[1])
+                elif kind == "pdf_done":
+                    _, success, result = message
+                    self._on_pdf_done(success, result)
         except queue.Empty:
             pass
         self.after(100, self._poll_queue)
