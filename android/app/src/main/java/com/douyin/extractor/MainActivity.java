@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -39,6 +40,7 @@ public class MainActivity extends Activity {
     private Button clearButton;
     private TextView logView;
     private TextView statusView;
+    private TextView progressPercent;
     private ProgressBar progress;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -71,12 +73,16 @@ public class MainActivity extends Activity {
         clearButton = findViewById(R.id.clear_button);
         logView = findViewById(R.id.log_view);
         statusView = findViewById(R.id.status_view);
+        progressPercent = findViewById(R.id.progress_percent);
         progress = findViewById(R.id.progress);
 
         extractButton.setOnClickListener(v -> startExtraction());
         stopButton.setOnClickListener(v -> stopExtraction());
         pdfButton.setOnClickListener(v -> openImagePicker());
-        clearButton.setOnClickListener(v -> logView.setText(""));
+        clearButton.setOnClickListener(v -> {
+            logView.setText(R.string.log_cleared);
+            Toast.makeText(this, R.string.log_cleared_toast, Toast.LENGTH_SHORT).show();
+        });
     }
 
     private List<String> collectLinks() {
@@ -106,18 +112,20 @@ public class MainActivity extends Activity {
         }
 
         setExtractionWorking(true);
-        progress.setProgress(0);
+        logView.setText("");
+        postProgress(0, 100);
         postLog("===== 开始提取, 共 " + links.size() + " 个链接 =====");
         postStatus("正在处理");
 
-        worker = new Thread(() -> runExtraction(links, root));
+        String cookie = cookieInput.getText().toString();
+        boolean includeVideo = downloadVideo.isChecked();
+        worker = new Thread(() -> runExtraction(links, root, cookie, includeVideo));
         worker.start();
     }
 
-    private void runExtraction(List<String> links, File root) {
+    private void runExtraction(List<String> links, File root, String cookie, boolean includeVideo) {
         int fail = 0;
-        extractor = new Extractor(cookieInput.getText().toString(),
-                downloadVideo.isChecked());
+        extractor = new Extractor(cookie, includeVideo);
 
         for (int index = 0; index < links.size(); index++) {
             if (worker == null || Thread.currentThread().isInterrupted()) {
@@ -147,7 +155,7 @@ public class MainActivity extends Activity {
 
     private void finishExtraction(int fail) {
         setExtractionWorking(false);
-        progress.setProgress(100);
+        postProgress(100, 100);
         if (fail == 0) {
             postStatus("全部成功");
             new AlertDialog.Builder(this)
@@ -170,12 +178,16 @@ public class MainActivity extends Activity {
             extractor.stop();
             postLog("收到停止指令, 等待当前操作结束...");
         }
+        stopButton.setText(R.string.stopping);
         stopButton.setEnabled(false);
     }
 
     private void setExtractionWorking(boolean working) {
+        extractButton.setVisibility(working ? View.GONE : View.VISIBLE);
         extractButton.setEnabled(!working);
+        stopButton.setVisibility(working ? View.VISIBLE : View.GONE);
         stopButton.setEnabled(working);
+        stopButton.setText(R.string.stop);
         linksInput.setEnabled(!working);
         cookieInput.setEnabled(!working);
         downloadVideo.setEnabled(!working);
@@ -228,7 +240,7 @@ public class MainActivity extends Activity {
         File output = new File(dir, "图片合集_" + stamp + ".pdf");
 
         pdfButton.setEnabled(false);
-        progress.setProgress(0);
+        postProgress(0, 100);
         Thread pdfWorker = new Thread(() -> {
             try {
                 postStatus("正在转换 " + uris.size() + " 张图片");
@@ -238,7 +250,7 @@ public class MainActivity extends Activity {
                 postLog("PDF 完成 -> " + output.getAbsolutePath());
                 handler.post(() -> {
                     pdfButton.setEnabled(true);
-                    progress.setProgress(100);
+                    postProgress(100, 100);
                     postStatus("PDF 转换完成");
                     new AlertDialog.Builder(this)
                             .setTitle(R.string.app_name)
@@ -267,11 +279,22 @@ public class MainActivity extends Activity {
     }
 
     private void postStatus(String status) {
-        handler.post(() -> statusView.setText(status));
+        handler.post(() -> {
+            statusView.setText(status);
+            int color = status.contains("失败")
+                    ? R.color.danger
+                    : (status.contains("成功") || status.contains("完成"))
+                    ? R.color.accent
+                    : R.color.muted;
+            statusView.setTextColor(getColor(color));
+        });
     }
 
     private void postProgress(int current, int total) {
         int percent = total == 0 ? 0 : (int) Math.round(current * 100.0 / total);
-        handler.post(() -> progress.setProgress(percent));
+        handler.post(() -> {
+            progress.setProgress(percent);
+            progressPercent.setText(String.format(Locale.ROOT, "%d%%", percent));
+        });
     }
 }
