@@ -32,7 +32,11 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## CI
 
-仓库根目录的 `.github/workflows/android.yml` 会在推送到 `main` 或提交 PR 时构建 debug APK，并把 APK 作为 Actions 构件上传。
+仓库根目录的 `.github/workflows/android.yml` 会在推送到 `main` 或提交 PR 时构建 debug APK，并把 APK 作为 Actions 构件上传。推送到 `main` 后，CI 还会把 APK 上传到预发布版本 `android-debug`：
+
+https://github.com/adigailmichael19-art/douyin-image-extractor/releases/tag/android-debug
+
+该 APK 使用 Android debug 证书签名，仅供个人学习和真机测试；安装前请在手机上允许来自本仓库来源的安装包。
 
 ## 说明
 

@@ -83,7 +83,7 @@ python test_douyin_gui.py
 - 透明图片自动铺白底，EXIF 方向自动校正
 - 日志、状态、进度和停止操作与桌面版行为保持一致
 
-本地构建命令与产物路径见 `android/README.md`。仓库根目录的 `.github/workflows/android.yml` 会在推送到 `main` 或提交 PR 时构建 debug APK，并把 APK 上传为 GitHub Actions 构件。
+本地构建命令与产物路径见 `android/README.md`。仓库根目录的 `.github/workflows/android.yml` 会在推送到 `main` 或提交 PR 时构建 debug APK；推送到 `main` 后，APK 会自动发布到预发布版本 [`android-debug`](https://github.com/adigailmichael19-art/douyin-image-extractor/releases/tag/android-debug)，同时也会作为 GitHub Actions 构件保留。
 
 ## 图标
 
