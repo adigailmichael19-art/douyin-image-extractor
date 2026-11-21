@@ -1,15 +1,28 @@
+# Python
 __pycache__/
 *.py[cod]
 *.part
 *.log
-douyin_downloads/
 .venv/
 venv/
+
+# Local outputs
+douyin_downloads/
 build/
 dist/
+
+# Android / Gradle
 .gradle/
+android/.gradle/
 android/local.properties
+android/app/build/
 *.apk
 *.aab
 *.keystore
 *.jks
+
+# IDE / OS
+.idea/
+*.iml
+.DS_Store
+Thumbs.db

@@ -3,15 +3,24 @@ name: Android APK
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -33,9 +42,23 @@ jobs:
           unzip -q "$HOME/.gradle-dist/gradle-8.7-bin.zip" -d "$HOME/.gradle-dist"
           echo "$HOME/.gradle-dist/gradle-8.7/bin" >> "$GITHUB_PATH"
 
-      - name: Build debug APK
+      - name: Lint and build debug APK
         working-directory: android
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: gradle :app:lintDebug :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Read APK metadata
+        id: apk
+        working-directory: android
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          AAPT2="$ANDROID_HOME/build-tools/34.0.0/aapt2"
+          if [ ! -x "$AAPT2" ]; then
+            AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -n 1)
+          fi
+          VERSION_NAME=$("$AAPT2" dump badging "$APK" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          VERSION_CODE=$("$AAPT2" dump badging "$APK" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -45,15 +68,16 @@ jobs:
           if-no-files-found: error
 
       - name: Publish APK to debug Release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: android
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
-          gh release create android-debug \
-            --prerelease \
-            --title "Android debug APK" \
-            --notes "Automated debug build from main. Signed with the Android debug key; use for personal learning and testing only." \
-            "$APK" || \
+          NOTES=$(printf 'Automated debug build from main.\n\n- Version: %s (%s)\n- Commit: %s\n- Signed with the Android debug key; use for personal learning and testing only.' "${{ steps.apk.outputs.version_name }}" "${{ steps.apk.outputs.version_code }}" "$GITHUB_SHA")
+          if gh release view android-debug >/dev/null 2>&1; then
+            gh release edit android-debug --title "Android debug APK" --notes "$NOTES"
+          else
+            gh release create android-debug --prerelease --title "Android debug APK" --notes "$NOTES"
+          fi
           gh release upload android-debug "$APK" --clobber
