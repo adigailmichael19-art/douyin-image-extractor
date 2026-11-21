@@ -42,6 +42,18 @@ jobs:
           unzip -q "$HOME/.gradle-dist/gradle-8.7-bin.zip" -d "$HOME/.gradle-dist"
           echo "$HOME/.gradle-dist/gradle-8.7/bin" >> "$GITHUB_PATH"
 
+      - name: Run unit tests
+        working-directory: android
+        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Upload unit test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: android/app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+
       - name: Lint and build debug APK
         working-directory: android
         run: gradle :app:lintDebug :app:assembleDebug --no-daemon --stacktrace

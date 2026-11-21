@@ -10,7 +10,7 @@
 
 | 平台 | 当前版本 | 获取方式 |
 | --- | --- | --- |
-| Android | `1.4-ui`（versionCode 4） | [下载 debug APK](https://github.com/adigailmichael19-art/douyin-image-extractor/releases/download/android-debug/app-debug.apk) |
+| Android | `1.5`（versionCode 5） | [下载 debug APK](https://github.com/adigailmichael19-art/douyin-image-extractor/releases/download/android-debug/app-debug.apk) |
 | Windows | 源码运行 | 按下方步骤安装依赖并启动 |
 
 Android APK 使用 Android debug 证书签名，仅供个人学习和真机测试。安装前需要在手机上允许安装来自该来源的应用。
@@ -19,7 +19,7 @@ Android APK 使用 Android debug 证书签名，仅供个人学习和真机测�
 
 ```text
 .
-├── .github/workflows/android.yml   # Android CI：lint、构建和发布
+├── .github/workflows/android.yml   # Android CI：单测、lint、构建和发布
 ├── android/                        # 原生 Android 工程
 │   ├── app/                        # Java 源码、布局和资源配置
 │   ├── build.gradle
@@ -84,6 +84,17 @@ python douyin_gui.py
 
 从 [Release](https://github.com/adigailmichael19-art/douyin-image-extractor/releases/tag/android-debug) 下载 `app-debug.apk` 后安装。该版本使用 debug 证书签名，仅用于个人学习和测试。
 
+### 手机上的使用步骤
+
+1. 在抖音里打开想保存的图文作品，点“分享”，选择“复制链接”，把整段分享口令粘贴到 App 的链接框；也可以直接把分享内容“发送”到本 App。
+2. 勾选或取消“同时下载视频作品的 MP4 文件”，点击“开始提取”。
+3. 提取完成后，原图会自动出现在系统相册的 `Pictures/DouyinExtractor` 目录（视频在 `Movies/DouyinExtractor`），应用专属下载目录里同时保留一份原始文件。
+4. 如果提示“无法获取作品数据”，先确认网络能正常打开该作品，再展开“Cookie（可选）”粘贴浏览器里本人账号的 Cookie 重试。App 会先自动申请访客 Cookie（ttwid），这一步失败时才会出现该提示。
+
+### 为什么以前在手机上解析失败
+
+抖音的分享页只有在请求携带访客 Cookie（`ttwid`）时才会内嵌作品数据。旧版本用裸 `HttpURLConnection` 请求，不保存任何 Cookie，服务端只返回约 3 KB 的页面外壳，所以界面永远报“未找到作品数据”。1.5 版本在每次任务开始时先向字节的 union-register 接口申请 `ttwid`，之后所有请求都带上同一份 Cookie，分享页才返回完整的 `videoInfoRes.item_list`。
+
 ### 本地构建
 
 需要 JDK 17、Android SDK 34、Build Tools 34.0.0 和 Gradle 8.7。
@@ -105,12 +116,21 @@ python test_douyin_gui.py
 
 测试覆盖链接解析、内嵌 JSON 解析、作品对象定位、反爬识别、模拟下载、多页 PDF、透明图、EXIF 方向和 GUI 冒烟流程；抖音相关测试使用模拟会话，不会访问真实服务。
 
-Android CI 位于 `.github/workflows/android.yml`，推送到 `main` 后执行 `lintDebug` 和 `assembleDebug`，并将 APK 上传到预发布版本 `android-debug`。纯文档提交不会触发重复构建。
+Android 单元测试（本地 JVM，无需真机，不访问真实抖音）：
+
+```bash
+cd android
+gradle :app:testDebugUnitTest --no-daemon
+```
+
+`ExtractorTest` 用内置的本地 HTTP 服务模拟“没有访客 Cookie 就只有空壳页面”的真实行为，覆盖完整提取与 2 张图片落盘、缺 Cookie 报错、`filter_list` 删除提示、无链接报错和文件名清洗五个用例。`Extractor.Config` 只用于把接口地址指向本地服务，线上默认值不变。
+
+Android CI 位于 `.github/workflows/android.yml`，推送到 `main` 后依次执行 `testDebugUnitTest`、`lintDebug` 和 `assembleDebug`，并把 APK 上传到预发布版本 `android-debug`。纯文档提交不会触发重复构建。
 
 ## 已知限制
 
-- 抖音页面结构、风控策略和访问权限可能随时变化。遇到验证码、滑块或反爬空壳时，纯网络请求不保证解析成功。
-- Android 版已在 Android 9 模拟器完成安装、空输入校验、停止任务、日志清空、多图合并 PDF 和横竖屏测试；真实抖音页面仍可能返回安全验证空壳。
+- 抖音页面结构、风控策略和访问权限可能随时变化。遇到验证码、滑块或反爬空壳时，纯网络请求不保证解析成功；此时可在 App 里填写本人 Cookie 重试。
+- 图片直链带签名有效期，过期后需要重新解析作品，不要保存旧链接。
 - 本工具不会绕过登录、付费、验证码、滑块或其他访问控制。
 - 不要在公开仓库、截图或日志中泄露自己的 Cookie、Token 或签名材料。
 
