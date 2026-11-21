@@ -12,6 +12,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -20,6 +21,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -73,9 +75,20 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (BuildConfig.DEBUG) {
+            // Debug-only on-device WebView inspection; release keeps it off.
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
         setContentView(R.layout.activity_main);
 
         linksInput = findViewById(R.id.links_input);
+        if (BuildConfig.DEBUG) {
+            // Debug-only test entry: prefill a real link without relying on the IME.
+            String debugLink = getIntent().getStringExtra("debug_link");
+            if (debugLink != null && !debugLink.isEmpty()) {
+                linksInput.setText(debugLink);
+            }
+        }
         cookieInput = findViewById(R.id.cookie_input);
         downloadVideo = findViewById(R.id.download_video);
         extractButton = findViewById(R.id.extract_button);
@@ -193,12 +206,13 @@ public class MainActivity extends Activity {
     private void runExtraction(List<String> links, File root, String cookie, boolean includeVideo) {
         int fail = 0;
         boolean cancelled = false;
+        List<String> pdfPaths = new ArrayList<>();
         try {
             extractor = new Extractor(cookie, includeVideo);
         } catch (Throwable t) {
             postLog("[失败] 提取器初始化失败: " + t.getClass().getSimpleName()
                     + (t.getMessage() == null ? "" : ": " + t.getMessage()));
-            handler.post(() -> finishExtraction(links.size(), false));
+            handler.post(() -> finishExtraction(links.size(), false, new ArrayList<>()));
             return;
         }
 
@@ -213,10 +227,53 @@ public class MainActivity extends Activity {
             postProgress(index, links.size());
             postLog("---------- [" + current + "/" + links.size() + "] ----------");
             try {
-                Extractor.Result result = extractor.extract(line, this::postLog);
-                File saved = extractor.saveResult(result, root, this::postLog);
-                lastSaveDir = saved;
-                publishToGallery(saved);
+                Extractor.Result result;
+                String[] resolved = extractor.resolvePublic(line, this::postLog);
+                String awemeId = resolved[0];
+                String kind = resolved[1];
+                if ("note".equals(kind)) {
+                    try {
+                        result = extractor.fetchHttpPublic(line, awemeId, kind, this::postLog);
+                        postLog("[HTTP] 图文数据: " + result.imageUrls.size() + " 张图片");
+                    } catch (Exception httpError) {
+                        postLog("[HTTP] " + httpError.getClass().getSimpleName() + ": "
+                                + httpError.getMessage() + "，尝试 WebView");
+                        WebViewFallback.Outcome wv = WebViewFallback.fetch(
+                                this, awemeId, this::postLog, extractor::isStopped);
+                        if (wv.hasImages()) {
+                            result = new Extractor.Result();
+                            result.awemeId = awemeId;
+                            result.kind = "note";
+                            result.desc = wv.desc == null ? "" : wv.desc;
+                            result.author = wv.author == null ? "" : wv.author;
+                            result.sourceUrl = line;
+                            result.imageUrls = new ArrayList<>(wv.images);
+                            result.imageCandidates = new ArrayList<>();
+                            for (String imageUrl : wv.images) {
+                                List<String> one = new ArrayList<>();
+                                one.add(imageUrl);
+                                result.imageCandidates.add(one);
+                                postLog("[WebView] 采纳图片: " + abbreviate(imageUrl, 80));
+                            }
+                        } else {
+                            postLog(wv.error == null || wv.error.isEmpty()
+                                    ? "[WebView] 未获取到图片" : "[WebView] " + wv.error);
+                            throw httpError;
+                        }
+                    }
+                } else {
+                    result = extractor.fetchHttpPublic(line, awemeId, kind, this::postLog);
+                }
+                Extractor.SavedResult saved = extractor.saveResult(result, root, this::postLog);
+                lastSaveDir = saved.saveDir;
+                publishToGallery(saved.saveDir);
+                if ("note".equals(result.kind) && saved.allImagesSaved()
+                        && !extractor.isStopped()) {
+                    File pdfFile = buildAutoPdf(result, saved);
+                    if (pdfFile != null) {
+                        pdfPaths.add(pdfFile.getAbsolutePath());
+                    }
+                }
             } catch (InterruptedException e) {
                 cancelled = true;
                 postLog("[停止] 任务已停止");
@@ -230,7 +287,49 @@ public class MainActivity extends Activity {
         postProgress(links.size(), links.size());
         final int finalFail = fail;
         final boolean finalCancelled = cancelled;
-        handler.post(() -> finishExtraction(finalFail, finalCancelled));
+        final List<String> finalPdfPaths = pdfPaths;
+        handler.post(() -> finishExtraction(finalFail, finalCancelled, finalPdfPaths));
+    }
+
+    private String abbreviate(String text, int max) {
+        if (text == null) {
+            return "";
+        }
+        return text.length() <= max ? text : text.substring(0, max) + " ...";
+    }
+
+    /**
+     * Auto-merge all downloaded images of one successful note into a standalone PDF.
+     * Runs on the extraction worker thread; a single failure never aborts the batch.
+     */
+    private File buildAutoPdf(Extractor.Result result, Extractor.SavedResult saved) {
+        try {
+            File dir = outputDir(Environment.DIRECTORY_DOCUMENTS, "douyin_pdfs");
+            if (!dir.exists() && !dir.mkdirs()) {
+                throw new IOException("PDF 目录无法创建: " + dir.getAbsolutePath());
+            }
+            String baseName = "图文_" + Extractor.safeName(result.desc, 40) + "_" + result.awemeId;
+            File output = uniquePdfFile(dir, baseName);
+            postStatus("正在生成 PDF (" + saved.imageFiles.size() + " 页)");
+            PdfExporter.exportFiles(this, saved.imageFiles, output, (current, total) ->
+                    postStatus("正在生成 PDF " + current + "/" + total));
+            postLog("PDF 完成 -> " + output.getAbsolutePath());
+            return output;
+        } catch (Throwable t) {
+            String reason = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
+            postLog("[失败] 自动生成 PDF: " + reason);
+            return null;
+        }
+    }
+
+    private File uniquePdfFile(File dir, String baseName) {
+        File candidate = new File(dir, baseName + ".pdf");
+        int suffix = 2;
+        while (candidate.exists()) {
+            candidate = new File(dir, baseName + "_" + suffix + ".pdf");
+            suffix++;
+        }
+        return candidate;
     }
 
     /** Copies images/video into Pictures/DouyinExtractor so the gallery can see them. */
@@ -265,33 +364,71 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void finishExtraction(int fail, boolean cancelled) {
+    private void finishExtraction(int fail, boolean cancelled, List<String> pdfPaths) {
         setExtractionWorking(false);
         postProgress(100, 100);
+        List<String> paths = pdfPaths == null ? new ArrayList<>() : pdfPaths;
+        String pdfPart = paths.isEmpty() ? "" : ", " + paths.size() + " 个 PDF";
+
         if (cancelled) {
-            postStatus(fail == 0 ? "已停止" : "已停止, " + fail + " 个失败");
+            postStatus((fail == 0 ? "已停止" : "已停止, " + fail + " 个失败") + pdfPart);
+            if (!paths.isEmpty()) {
+                postLog("本次生成 " + paths.size() + " 个 PDF:");
+                for (String path : paths) {
+                    postLog("  " + path);
+                }
+            }
             return;
         }
+
         File saved = lastSaveDir;
         String location = saved == null ? "" : "\n保存位置: " + saved.getAbsolutePath();
         if (fail == 0) {
-            postStatus("全部成功");
+            postStatus("全部成功" + pdfPart);
             AlertDialog.Builder builder = new AlertDialog.Builder(this)
                     .setTitle(R.string.app_name)
-                    .setMessage("全部链接提取完成!" + location)
+                    .setMessage(buildSummaryMessage(0, paths) + location)
                     .setPositiveButton(android.R.string.ok, null);
             if (hasPublishedMedia()) {
                 builder.setNeutralButton("查看图片", (dialog, which) -> openFirstResult());
             }
             builder.show();
         } else {
-            postStatus("结束, " + fail + " 个失败");
+            postStatus("结束, " + fail + " 个失败" + pdfPart);
             new AlertDialog.Builder(this)
                     .setTitle(R.string.app_name)
                     .setMessage("任务结束, " + fail + " 个链接失败, 请查看日志" + location)
                     .setPositiveButton(android.R.string.ok, null)
                     .show();
         }
+    }
+
+    private String buildSummaryMessage(int fail, List<String> pdfPaths) {
+        StringBuilder sb = new StringBuilder();
+        if (fail == 0) {
+            sb.append("全部链接提取完成!");
+        } else {
+            sb.append("任务结束, ").append(fail).append(" 个链接失败, 请查看日志");
+        }
+        if (pdfPaths.isEmpty()) {
+            sb.append("\n本次未生成 PDF");
+        } else {
+            sb.append("\n本次生成 ").append(pdfPaths.size()).append(" 个 PDF");
+            int show = Math.min(3, pdfPaths.size());
+            for (int i = 0; i < show; i++) {
+                sb.append("\n").append(pdfPaths.get(i));
+            }
+            if (pdfPaths.size() > 3) {
+                sb.append("\n... 其余 ").append(pdfPaths.size() - 3).append(" 个见日志");
+            }
+        }
+        return sb.toString();
+    }
+
+    @Override
+    protected void onDestroy() {
+        WebViewFallback.cancelActive();
+        super.onDestroy();
     }
 
     private boolean hasPublishedMedia() {

@@ -203,7 +203,12 @@ public class ExtractorTest {
         assertEquals(2, result.imageCandidates.size());
         assertTrue(result.desc.contains("场强叠加"));
 
-        File dir = extractor.saveResult(result, tempRoot, tee(log));
+        Extractor.SavedResult saved = extractor.saveResult(result, tempRoot, tee(log));
+        File dir = saved.saveDir;
+        assertEquals(2, saved.ok);
+        assertEquals(2, saved.total);
+        assertEquals(2, saved.imageFiles.size());
+        assertTrue(saved.allImagesSaved());
         File first = new File(dir, "001.jpg");
         File second = new File(dir, "002.jpg");
         assertTrue("001.jpg 应存在", first.exists());
