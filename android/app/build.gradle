@@ -5,13 +5,14 @@ plugins {
 android {
     namespace 'com.douyin.extractor'
     compileSdk 34
+    buildToolsVersion "34.0.0"
 
     defaultConfig {
         applicationId "com.douyin.extractor"
         minSdk 24
         targetSdk 34
-        versionCode 4
-        versionName "1.4-ui"
+        versionCode 5
+        versionName "1.5"
     }
 
     buildTypes {
@@ -25,4 +26,13 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
 }

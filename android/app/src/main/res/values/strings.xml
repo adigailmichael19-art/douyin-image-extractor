@@ -20,7 +20,7 @@
     <string name="progress_title">任务进度</string>
     <string name="status_ready">准备就绪</string>
     <string name="progress_initial">0%</string>
-    <string name="output_help">提取结果保存在应用专属下载目录</string>
+    <string name="output_help">原图会自动导出到手机相册 Pictures/DouyinExtractor，同时保留一份在应用专属下载目录</string>
     <string name="log_title">运行日志</string>
     <string name="log_empty">等待任务开始，提取过程会显示在这里…</string>
     <string name="log_cleared">日志已清空，等待下一次任务…</string>
