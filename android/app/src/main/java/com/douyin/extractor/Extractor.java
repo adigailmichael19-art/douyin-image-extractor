@@ -67,6 +67,29 @@ public final class Extractor {
         public String videoUrl = "";
     }
 
+    /**
+     * Outcome of saving one work: the directory, the successfully downloaded
+     * image files in original order, and the saved/total counts for images.
+     * Used by the UI layer to decide whether an auto PDF can be produced.
+     */
+    public static final class SavedResult {
+        public final File saveDir;
+        public final List<File> imageFiles;
+        public final int ok;
+        public final int total;
+
+        public SavedResult(File saveDir, List<File> imageFiles, int ok, int total) {
+            this.saveDir = saveDir;
+            this.imageFiles = imageFiles == null ? new ArrayList<>() : imageFiles;
+            this.ok = ok;
+            this.total = total;
+        }
+
+        public boolean allImagesSaved() {
+            return total > 0 && ok == total;
+        }
+    }
+
     /** Endpoints and headers; overridable so JVM tests can point at a local server. */
     static final class Config {
         String douyinHome = "https://www.douyin.com/";
@@ -83,6 +106,9 @@ public final class Extractor {
         String desktopUa =
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                         + "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+        String androidUa =
+                "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 "
+                        + "(KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
         int timeoutMs = 20000;
     }
 
@@ -126,6 +152,10 @@ public final class Extractor {
         stopped = true;
     }
 
+    public boolean isStopped() {
+        return stopped;
+    }
+
     public Result extract(String rawText, Logger logger)
             throws ExtractorException, IOException, JSONException, InterruptedException {
         String url = extractFirstUrl(rawText);
@@ -140,6 +170,32 @@ public final class Extractor {
 
         JSONObject aweme = fetchAwemeData(awemeId, kind, logger);
         return buildResult(url, awemeId, aweme, logger);
+    }
+
+    /**
+     * Resolves the first URL in the share text and returns {@code [awemeId, kind]}.
+     * Shared by the HTTP path and the WebView fallback so link/ID resolution
+     * behavior stays unchanged.
+     */
+    public String[] resolvePublic(String rawText, Logger logger)
+            throws ExtractorException, IOException, JSONException, InterruptedException {
+        String url = extractFirstUrl(rawText);
+        logger.log("链接: " + url);
+        ensureVisitorCookies(logger);
+        String[] resolved = resolveAweme(url, logger);
+        logger.log("作品 ID: " + resolved[0] + "    类型: " + resolved[1]);
+        return resolved;
+    }
+
+    /**
+     * HTTP-only fetch for an already resolved work; used as the fallback after
+     * the WebView rendering attempt fails.
+     */
+    public Result fetchHttpPublic(String sourceUrl, String awemeId, String kind, Logger logger)
+            throws ExtractorException, IOException, JSONException, InterruptedException {
+        ensureVisitorCookies(logger);
+        JSONObject aweme = fetchAwemeData(awemeId, kind, logger);
+        return buildResult(sourceUrl, awemeId, aweme, logger);
     }
 
     private String extractFirstUrl(String text) throws ExtractorException {
@@ -314,14 +370,31 @@ public final class Extractor {
 
     private JSONObject fetchAwemeData(String awemeId, String kind, Logger logger)
             throws ExtractorException, IOException, JSONException, InterruptedException {
-        String alternate = "note".equals(kind) ? "video" : "note";
-        String[][] pages = {
-                {config.shareBase + "/" + kind + "/" + awemeId + "/", config.mobileUa},
-                {config.shareBase + "/" + alternate + "/" + awemeId + "/", config.mobileUa},
-                {config.desktopBase + "/" + kind + "/" + awemeId, config.desktopUa}
-        };
+        String[][] pages = "note".equals(kind)
+                ? new String[][]{
+                    {config.shareBase + "/video/" + awemeId + "/", config.mobileUa},
+                    {config.shareBase + "/video/" + awemeId + "/", config.androidUa},
+                    {config.shareBase + "/note/" + awemeId + "/", config.mobileUa},
+                    {config.desktopBase + "/note/" + awemeId, config.desktopUa}
+                }
+                : new String[][]{
+                    {config.shareBase + "/video/" + awemeId + "/", config.mobileUa},
+                    {config.shareBase + "/video/" + awemeId + "/", config.androidUa},
+                    {config.desktopBase + "/video/" + awemeId, config.desktopUa}
+                };
 
         for (int attempt = 0; attempt <= 2; attempt++) {
+            // The public share/slides page also issues an anonymous ttwid.
+            // It is a low-cost fallback when union-register is unavailable.
+            if ("note".equals(kind) && !cookies.containsKey("ttwid")) {
+                logger.log("  请求 slides 页获取匿名 ttwid");
+                try {
+                    fetch(config.shareBase + "/slides/" + awemeId + "/",
+                            config.mobileUa, config.timeoutMs);
+                } catch (IOException e) {
+                    logger.log("  slides 页失败: " + e.getMessage());
+                }
+            }
             for (String[] page : pages) {
                 checkStopped();
                 String pageUrl = page[0];
@@ -332,6 +405,11 @@ public final class Extractor {
                     result = fetch(pageUrl, ua, config.timeoutMs);
                 } catch (IOException e) {
                     logger.log("  请求异常: " + e.getMessage());
+                    continue;
+                }
+                if (result.statusCode >= 400) {
+                    logger.log("  HTTP 错误 " + result.statusCode + " ("
+                            + result.body.length() + " 字节)");
                     continue;
                 }
 
@@ -609,7 +687,7 @@ public final class Extractor {
     // Saving
     // ------------------------------------------------------------------
 
-    public File saveResult(Result result, File root, Logger logger)
+    public SavedResult saveResult(Result result, File root, Logger logger)
             throws IOException, InterruptedException, ExtractorException, JSONException {
         String dirName = safeName(result.desc, 50) + "_" + result.awemeId;
         File saveDir = new File(root, dirName);
@@ -630,22 +708,26 @@ public final class Extractor {
         writeText(new File(saveDir, "caption.txt"),
                 "作者: " + result.author + nl + "文案: " + result.desc + nl + "链接: " + result.sourceUrl + nl);
 
+        List<File> imageFiles = new ArrayList<>();
         if ("note".equals(result.kind)) {
-            logger.log("图文笔记共 " + result.imageUrls.size() + " 张图片, 开始下载...");
+            int total = result.imageCandidates.size();
+            logger.log("图文笔记共 " + total + " 张图片, 开始下载...");
             int ok = 0;
-            for (int i = 0; i < result.imageCandidates.size(); i++) {
+            for (int i = 0; i < total; i++) {
                 checkStopped();
                 List<String> candidates = result.imageCandidates.get(i);
-                logger.log("  (" + (i + 1) + "/" + result.imageCandidates.size() + ") 下载中...");
+                logger.log("  (" + (i + 1) + "/" + total + ") 下载中...");
                 File saved = downloadImage(candidates, saveDir, i + 1, logger);
                 if (saved != null) {
                     ok++;
+                    imageFiles.add(saved);
                 }
             }
-            logger.log("图片完成: " + ok + "/" + result.imageCandidates.size() + " 张 -> " + saveDir);
+            logger.log("图片完成: " + ok + "/" + total + " 张 -> " + saveDir);
             if (ok == 0) {
                 throw new ExtractorException("图片全部下载失败, 可稍后重试或填写 Cookie");
             }
+            return new SavedResult(saveDir, imageFiles, ok, total);
         } else if (wantVideo && !result.videoCandidates.isEmpty()) {
             logger.log("视频作品, 开始下载...");
             File target = new File(saveDir, "video.mp4");
@@ -659,7 +741,7 @@ public final class Extractor {
         } else {
             throw new ExtractorException("未找到视频地址, 作品可能权限受限");
         }
-        return saveDir;
+        return new SavedResult(saveDir, imageFiles, 0, 0);
     }
 
     private File downloadImage(List<String> candidates, File dir, int index, Logger logger) {

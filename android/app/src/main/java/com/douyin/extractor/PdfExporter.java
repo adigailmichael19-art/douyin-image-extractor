@@ -34,6 +34,23 @@ public final class PdfExporter {
     private PdfExporter() {
     }
 
+    /**
+     * Convenience entry for locally saved image files. Files are converted to
+     * {@code file://} URIs and processed by the same export pipeline below.
+     * Kept under a distinct name because {@code List<File>} and {@code List<Uri>}
+     * erase to the same {@code List} type.
+     */
+    public static File exportFiles(Context context, List<File> files, File outputPdf,
+                                   ProgressCallback callback) throws Exception {
+        List<Uri> uris = new java.util.ArrayList<>();
+        if (files != null) {
+            for (File file : files) {
+                uris.add(Uri.fromFile(file));
+            }
+        }
+        return export(context, uris, outputPdf, callback);
+    }
+
     public static File export(Context context, List<Uri> uris, File outputPdf,
                                ProgressCallback callback) throws Exception {
         if (uris == null || uris.isEmpty()) {
