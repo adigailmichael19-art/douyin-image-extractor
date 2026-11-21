@@ -1,9 +1,12 @@
 package com.douyin.extractor;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
@@ -28,6 +31,8 @@ import java.util.regex.Pattern;
 public class MainActivity extends Activity {
 
     private static final int REQUEST_PDF_IMAGES = 1001;
+    private static final int REQUEST_STORAGE = 1002;
+    private static final String GALLERY_ALBUM = "DouyinExtractor";
     private static final Pattern URL_PATTERN =
             Pattern.compile("https?://[^\\s，。；、“”‘’）)】]+");
 
@@ -47,6 +52,12 @@ public class MainActivity extends Activity {
     private Thread worker;
     private volatile Extractor extractor;
     private List<Uri> pendingImages = new ArrayList<>();
+    private final List<Uri> publishedUris = new ArrayList<>();
+    private volatile Uri firstPublishedUri;
+    private volatile boolean firstPublishedIsVideo;
+    private boolean storageChecked;
+    private boolean pendingStart;
+    private volatile File lastSaveDir;
 
     private File outputDir(String type, String child) {
         File base = getExternalFilesDir(type);
@@ -83,6 +94,31 @@ public class MainActivity extends Activity {
             logView.setText(R.string.log_cleared);
             Toast.makeText(this, R.string.log_cleared_toast, Toast.LENGTH_SHORT).show();
         });
+
+        handleIncomingIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingIntent(intent);
+    }
+
+    /** Lets the user share a Douyin post straight into the app from the share sheet. */
+    private void handleIncomingIntent(Intent intent) {
+        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) {
+            return;
+        }
+        CharSequence shared = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+        if (shared == null || shared.toString().trim().isEmpty()) {
+            return;
+        }
+        String text = shared.toString().trim();
+        linksInput.setText(text);
+        if (linksInput.getText().length() > 0) {
+            Toast.makeText(this, "已粘贴分享内容, 点击开始提取", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private List<String> collectLinks() {
@@ -105,12 +141,29 @@ public class MainActivity extends Activity {
             return;
         }
 
+        // Android 7-9 need the legacy write permission for the public gallery copy.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && !storageChecked
+                && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            storageChecked = true;
+            pendingStart = true;
+            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_STORAGE);
+            return;
+        }
+        beginExtraction(links);
+    }
+
+    private void beginExtraction(List<String> links) {
         File root = outputDir(Environment.DIRECTORY_DOWNLOADS, "douyin_extractor");
         if (!root.exists() && !root.mkdirs()) {
             Toast.makeText(this, "输出目录无法创建", Toast.LENGTH_SHORT).show();
             return;
         }
 
+        publishedUris.clear();
+        firstPublishedUri = null;
+        firstPublishedIsVideo = false;
+        lastSaveDir = null;
         setExtractionWorking(true);
         logView.setText("");
         postProgress(0, 100);
@@ -121,6 +174,20 @@ public class MainActivity extends Activity {
         boolean includeVideo = downloadVideo.isChecked();
         worker = new Thread(() -> runExtraction(links, root, cookie, includeVideo));
         worker.start();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_STORAGE || !pendingStart) {
+            return;
+        }
+        pendingStart = false;
+        boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        if (!granted) {
+            postLog("未授予存储权限, 图片仍会保存到应用私有目录");
+        }
+        startExtraction();
     }
 
     private void runExtraction(List<String> links, File root, String cookie, boolean includeVideo) {
@@ -147,7 +214,9 @@ public class MainActivity extends Activity {
             postLog("---------- [" + current + "/" + links.size() + "] ----------");
             try {
                 Extractor.Result result = extractor.extract(line, this::postLog);
-                extractor.saveResult(result, root, this::postLog);
+                File saved = extractor.saveResult(result, root, this::postLog);
+                lastSaveDir = saved;
+                publishToGallery(saved);
             } catch (InterruptedException e) {
                 cancelled = true;
                 postLog("[停止] 任务已停止");
@@ -164,6 +233,38 @@ public class MainActivity extends Activity {
         handler.post(() -> finishExtraction(finalFail, finalCancelled));
     }
 
+    /** Copies images/video into Pictures/DouyinExtractor so the gallery can see them. */
+    private void publishToGallery(File dir) {
+        File[] files = dir.listFiles();
+        if (files == null) {
+            return;
+        }
+        int published = 0;
+        for (File file : files) {
+            String name = file.getName().toLowerCase(Locale.ROOT);
+            if (!name.endsWith(".jpg") && !name.endsWith(".png")
+                    && !name.endsWith(".webp") && !name.endsWith(".mp4")) {
+                continue;
+            }
+            Uri uri = GalleryExporter.publish(this, file, GALLERY_ALBUM);
+            if (uri != null) {
+                synchronized (publishedUris) {
+                    if (firstPublishedUri == null) {
+                        firstPublishedUri = uri;
+                        firstPublishedIsVideo = name.endsWith(".mp4");
+                    }
+                    publishedUris.add(uri);
+                }
+                published++;
+            }
+        }
+        if (published > 0) {
+            postLog("  已导出到手机相册: Pictures/" + GALLERY_ALBUM + " (" + published + " 个文件)");
+        } else {
+            postLog("  写入相册失败, 文件保留在: " + dir.getAbsolutePath());
+        }
+    }
+
     private void finishExtraction(int fail, boolean cancelled) {
         setExtractionWorking(false);
         postProgress(100, 100);
@@ -171,20 +272,47 @@ public class MainActivity extends Activity {
             postStatus(fail == 0 ? "已停止" : "已停止, " + fail + " 个失败");
             return;
         }
+        File saved = lastSaveDir;
+        String location = saved == null ? "" : "\n保存位置: " + saved.getAbsolutePath();
         if (fail == 0) {
             postStatus("全部成功");
-            new AlertDialog.Builder(this)
+            AlertDialog.Builder builder = new AlertDialog.Builder(this)
                     .setTitle(R.string.app_name)
-                    .setMessage("全部链接提取完成!")
-                    .setPositiveButton(android.R.string.ok, null)
-                    .show();
+                    .setMessage("全部链接提取完成!" + location)
+                    .setPositiveButton(android.R.string.ok, null);
+            if (hasPublishedMedia()) {
+                builder.setNeutralButton("查看图片", (dialog, which) -> openFirstResult());
+            }
+            builder.show();
         } else {
             postStatus("结束, " + fail + " 个失败");
             new AlertDialog.Builder(this)
                     .setTitle(R.string.app_name)
-                    .setMessage("任务结束, " + fail + " 个链接失败, 请查看日志")
+                    .setMessage("任务结束, " + fail + " 个链接失败, 请查看日志" + location)
                     .setPositiveButton(android.R.string.ok, null)
                     .show();
+        }
+    }
+
+    private boolean hasPublishedMedia() {
+        synchronized (publishedUris) {
+            return !publishedUris.isEmpty();
+        }
+    }
+
+    private void openFirstResult() {
+        Uri uri = firstPublishedUri;
+        if (uri == null) {
+            return;
+        }
+        String type = firstPublishedIsVideo ? "video/*" : "image/*";
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri, type);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(this, "无法打开图片: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
     }
 
