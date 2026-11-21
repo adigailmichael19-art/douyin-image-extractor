@@ -2,6 +2,7 @@ plugins {
     id 'com.android.application'
 }
 
+// CI rebuild trigger for the verified Android 1.7 merge.
 android {
     namespace 'com.douyin.extractor'
     compileSdk 34
