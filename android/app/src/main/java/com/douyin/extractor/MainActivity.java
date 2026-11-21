@@ -125,10 +125,19 @@ public class MainActivity extends Activity {
 
     private void runExtraction(List<String> links, File root, String cookie, boolean includeVideo) {
         int fail = 0;
-        extractor = new Extractor(cookie, includeVideo);
+        boolean cancelled = false;
+        try {
+            extractor = new Extractor(cookie, includeVideo);
+        } catch (Throwable t) {
+            postLog("[失败] 提取器初始化失败: " + t.getClass().getSimpleName()
+                    + (t.getMessage() == null ? "" : ": " + t.getMessage()));
+            handler.post(() -> finishExtraction(links.size(), false));
+            return;
+        }
 
         for (int index = 0; index < links.size(); index++) {
             if (worker == null || Thread.currentThread().isInterrupted()) {
+                cancelled = true;
                 break;
             }
             String line = links.get(index);
@@ -140,6 +149,7 @@ public class MainActivity extends Activity {
                 Extractor.Result result = extractor.extract(line, this::postLog);
                 extractor.saveResult(result, root, this::postLog);
             } catch (InterruptedException e) {
+                cancelled = true;
                 postLog("[停止] 任务已停止");
                 break;
             } catch (Exception e) {
@@ -150,12 +160,17 @@ public class MainActivity extends Activity {
 
         postProgress(links.size(), links.size());
         final int finalFail = fail;
-        handler.post(() -> finishExtraction(finalFail));
+        final boolean finalCancelled = cancelled;
+        handler.post(() -> finishExtraction(finalFail, finalCancelled));
     }
 
-    private void finishExtraction(int fail) {
+    private void finishExtraction(int fail, boolean cancelled) {
         setExtractionWorking(false);
         postProgress(100, 100);
+        if (cancelled) {
+            postStatus(fail == 0 ? "已停止" : "已停止, " + fail + " 个失败");
+            return;
+        }
         if (fail == 0) {
             postStatus("全部成功");
             new AlertDialog.Builder(this)
