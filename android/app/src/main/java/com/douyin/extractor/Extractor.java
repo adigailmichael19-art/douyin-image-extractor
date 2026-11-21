@@ -64,7 +64,7 @@ public final class Extractor {
     private static final Pattern ID_PATTERN =
             Pattern.compile("(?:/note/|/video/|modal_id=|aweme_id=)([0-9]{10,})");
     private static final Pattern ROUTER_PATTERN =
-            Pattern.compile("window[.]_ROUTER_DATA[ ]*=[ ]*([{].*?})[ ]*;?[ ]*</script>",
+            Pattern.compile("window[.]_ROUTER_DATA[ ]*=[ ]*(\\{.*?\\})[ ]*;?[ ]*</script>",
                     Pattern.DOTALL);
     private static final Pattern RENDER_PATTERN =
             Pattern.compile("id=\"RENDER_DATA\"[^>]*>(.*?)</script>", Pattern.DOTALL);
