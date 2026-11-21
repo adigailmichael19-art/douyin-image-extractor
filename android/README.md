@@ -1,28 +1,33 @@
 # Android 手机版
 
-本目录是桌面版工具的原生 Android 工程，包名 `com.douyin.extractor`，最低支持 Android 7.0（API 24）。当前版本 `1.5`（versionCode 5）。
+本目录是桌面版工具的原生 Android 工程，包名 `com.douyin.extractor`，最低支持 Android 7.0（API 24）。当前版本 `1.7`（versionCode 8）。
 
 ## 功能
 
 - 粘贴抖音短链、完整链接或 App 分享口令，支持多行批量处理
-- 从系统分享面板直接把抖音分享内容发到本 App
+- 支持从系统分享面板把抖音分享内容直接发送到本 App
 - 识别图文笔记与视频作品
-- 自动申请访客 Cookie（ttwid），解决分享页只返回空壳的问题
 - 可选 Cookie 输入，仅用于本人正常访问，不绕过登录、付费或访问控制
-- 图文原图下载，并自动导出到系统相册 `Pictures/DouyinExtractor`
-- 视频作品可选下载 MP4，导出到 `Movies/DouyinExtractor`
+- 图文原图下载到应用外部文件目录，并自动导出到系统相册 `Pictures/DouyinExtractor`（视频为 `Movies/DouyinExtractor`）
+- 图文作品优先走公开 HTTP：先通过 `ttwid.bytedance.com` 访客接口或 `share/slides/<id>` 获取匿名 `ttwid` Cookie，再携带 Cookie 请求 `share/video/<id>`，读取 `_ROUTER_DATA.loaderData['video_(id)/page'].videoInfoRes.item_list[0].images`，按原顺序下载全部原图
+- 图片候选优先 `.jpeg/.jpg`，逐候选重试；小于 1024 字节的响应视为可能被风控拦截，不当作成功
+- HTTP 未拿到图片时，隐藏 WebView 加载 `share/video` / `share/note` 移动分享页兜底，读取路由数据或页面图片请求；仍失败则如实报错
+- 不点击、不破解验证码、滑块或登录弹窗；命中验证环境时记录并停止该路径
+- debug 构建开启 WebView DevTools 远程调试，release 不开启
+- 图文作品图片全部下载成功后，自动按原始顺序合成独立 PDF（每个作品一个文件），保存到外部文件目录 Documents 下的 `douyin_pdfs/`；日志与结束弹窗显示 PDF 数量和路径
+- 0 张图、部分图片下载失败、任务停止或提取失败时不生成 PDF；单个作品或单个 PDF 生成失败不阻断其余作品
+- 视频作品可选下载 MP4；取消勾选时仅记录解析结果
 - 后台线程执行，界面显示日志、状态和进度
-- 从系统图片选择器选择多张本地图片，合并为 A4 PDF
+- 提取失败时区分网络请求失败、安全验证/反爬空壳、页面未包含作品数据三类并在日志说明
+- 从系统图片选择器选择多张本地图片，手动合并为 A4 PDF
 - 透明图片自动铺白底，EXIF 方向自动校正
 
-## 提取流程
+## 使用
 
-1. `ttwid.bytedance.com/ttwid/union/register/` 申请访客 Cookie，存入内存 Cookie 罐。
-2. 请求短链，跟随 302 到 `iesdouyin.com/share/note/<id>/`，解析 `window._ROUTER_DATA`。
-3. 从 `loaderData["note_(id)/page"].videoInfoRes.item_list[0]` 读取作者、文案和 `images[].url_list`。
-4. 逐张图片按 JPEG 优先的候选顺序下载，失败换候选或换扩展名重试。
-
-分享页没有 `ttwid` 时只返回约 3 KB 的页面配置（没有作品数据），这正是旧版本在手机上失败的根因。`Extractor.Config` 允许把上述地址指向本地测试服务，默认值即线上地址。
+1. 在抖音里打开作品，点“分享” → “复制链接”，把整段分享口令粘贴到链接框；也可以直接把分享内容发送到本 App。
+2. 选择是否下载视频 MP4，点击“开始提取”。
+3. 原图保存到应用专属目录，并自动复制到系统相册；图片全部下载成功后会生成一个独立 PDF。
+4. 如果提示“无法获取作品数据”，先确认网络能正常打开该作品，再展开“Cookie（可选）”粘贴本人浏览器 Cookie 重试。App 会先自动申请访客 Cookie，失败时才需要手动填写。
 
 ## 本地构建
 
@@ -41,18 +46,9 @@ app/build/outputs/apk/debug/app-debug.apk
 
 也可以用 Android Studio 打开 `android/` 目录后直接运行。
 
-## 单元测试
-
-```bash
-cd android
-gradle :app:testDebugUnitTest --no-daemon
-```
-
-`app/src/test/java/com/douyin/extractor/ExtractorTest.java` 用 JDK 自带的 socket 写了一个极简 HTTP 服务，模拟抖音的三类响应：必须带 ttwid 才给数据的分享页、只有页面配置的空壳、`filter_list` 删除提示。测试覆盖完整提取并落盘 2 张图片、缺 Cookie 报错、删除提示、无链接报错和文件名清洗，全程不访问真实抖音。
-
 ## CI
 
-仓库根目录的 `.github/workflows/android.yml` 会在推送到 `main` 或提交 PR 时依次执行 `testDebugUnitTest`、`lintDebug` 和 `assembleDebug`，把 APK 作为 Actions 构件上传，并在推送到 `main` 后把 APK 上传到预发布版本 `android-debug`：
+仓库根目录的 `.github/workflows/android.yml` 会在推送到 `main` 或提交 PR 时依次执行 `testDebugUnitTest`、`lintDebug`、`assembleDebug`，并把 APK 作为 Actions 构件上传。推送到 `main` 后，CI 还会把 APK 上传到预发布版本 `android-debug`：
 
 https://github.com/adigailmichael19-art/douyin-image-extractor/releases/tag/android-debug
 
@@ -60,4 +56,4 @@ https://github.com/adigailmichael19-art/douyin-image-extractor/releases/tag/andr
 
 ## 说明
 
-抖音页面结构、风控策略和访问权限可能随时变化。如果返回验证码、滑块或空壳页面，纯网络请求不能保证解析成功；可在 App 内填写本人浏览器 Cookie 后重试。图片直链带签名有效期，过期后需要重新解析作品。本工具仅供个人学习与技术研究，下载内容应尊重原创版权与平台条款。
+抖音页面结构、风控策略和访问权限可能随时变化。公开分享页是否下发 `videoInfoRes` 取决于匿名 Cookie、UA 与页面版本；数据中心/机房 IP 下可能只返回 SSR 空壳或风控页面。旧版系统 WebView 可能无法执行新版分享页脚本，但 HTTP 主链路不依赖 WebView。应用不绕过任何验证，不保证对所有链接成功。本工具仅供个人学习与技术研究，下载内容应尊重原创版权与平台条款。

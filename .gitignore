@@ -8,6 +8,7 @@ venv/
 
 # Local outputs
 douyin_downloads/
+evidence/
 build/
 dist/
 
