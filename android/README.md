@@ -1,6 +1,6 @@
 # Android 手机版
 
-本目录是桌面版工具的原生 Android 工程，包名 `com.douyin.extractor`，最低支持 Android 7.0（API 24）。
+本目录是桌面版工具的原生 Android 工程，包名 `com.douyin.extractor`，最低支持 Android 7.0（API 24）。当前版本 `1.4-ui`（versionCode 4）。
 
 ## 功能
 
