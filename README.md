@@ -75,13 +75,16 @@ python test_douyin_gui.py
 
 ## Android 手机版
 
-`android/` 目录是原生 Android Java 工程，包名 `com.douyin.extractor`，最低支持 Android 7.0（API 24），compile/target SDK 34。
+`android/` 目录是原生 Android Java 工程，包名 `com.douyin.extractor`，最低支持 Android 7.0（API 24），compile/target SDK 34。当前 Android 构建版本为 `1.4-ui`（versionCode 4）。
 
 - 批量粘贴抖音链接或分享口令，后台线程提取图文原图与可选 MP4 视频
 - 可选 Cookie，仅用于本人正常访问，不绕过登录、付费或访问控制
 - 从系统图片选择器选择多张本地图片，合并为 A4 PDF
 - 透明图片自动铺白底，EXIF 方向自动校正
 - 日志、状态、进度和停止操作与桌面版行为保持一致
+- 修复 Android 9 上开始提取时的正则兼容性崩溃，并完善停止状态与初始化失败提示
+
+已在 Android 9 模拟器完成安装启动、空输入校验、任务运行/停止、日志清空和多图合并 PDF 测试。真实抖音页面仍可能返回安全验证空壳，此时可填写本人 Cookie 后重试。
 
 本地构建命令与产物路径见 `android/README.md`。仓库根目录的 `.github/workflows/android.yml` 会在推送到 `main` 或提交 PR 时构建 debug APK；推送到 `main` 后，APK 会自动发布到预发布版本 [`android-debug`](https://github.com/adigailmichael19-art/douyin-image-extractor/releases/tag/android-debug)，同时也会作为 GitHub Actions 构件保留。
 
