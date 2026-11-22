@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用与构建说明
+    url: https://github.com/adigailmichael19-art/douyin-image-extractor#readme
+    about: 先看 README 里的功能、环境要求和已知限制
+  - name: 安全问题
+    url: https://github.com/adigailmichael19-art/douyin-image-extractor/security/advisories/new
+    about: 安全相关问题请走私密报告，不要开公开 Issue

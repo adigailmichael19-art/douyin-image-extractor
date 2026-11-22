@@ -5,12 +5,18 @@ __pycache__/
 *.log
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
 
-# Local outputs
+# 本地输出
 douyin_downloads/
 evidence/
 build/
 dist/
+
+# 图标脚本产物（tools/ 下的脚本默认输出到仓库根目录）
+app_icon*.png
+app.ico
 
 # Android / Gradle
 .gradle/

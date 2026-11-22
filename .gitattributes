@@ -1,0 +1,8 @@
+# 仓库以 Python 桌面版为主入口，Android 子工程不参与 GitHub 语言统计
+android/** -linguist-detectable
+
+# 二进制资源按原样处理
+*.png binary
+*.ico binary
+*.jar binary
+*.apk binary
