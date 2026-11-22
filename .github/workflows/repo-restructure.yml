@@ -1,0 +1,51 @@
+name: Repo restructure (one-off)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.repo-move-trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move desktop code into src and tests
+        run: |
+          set -e
+          mkdir -p src tests
+          MOVED=0
+          if [ -f douyin_gui.py ]; then
+            git mv douyin_gui.py src/douyin_gui.py
+            MOVED=1
+          fi
+          if [ -f test_douyin_gui.py ]; then
+            git mv test_douyin_gui.py tests/test_douyin_gui.py
+            MOVED=1
+          fi
+          if [ -f tests/test_douyin_gui.py ]; then
+            python3 -c "import pathlib; p = pathlib.Path('tests/test_douyin_gui.py'); s = p.read_text(encoding='utf-8'); old = 'import douyin_gui as dg'; new = 'ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))' + chr(10) + 'sys.path.insert(0, os.path.join(ROOT, \"src\"))' + chr(10) + chr(10) + 'import douyin_gui as dg'; s = s.replace(old, new, 1) if (old in s and 'sys.path.insert(0' not in s) else s; p.write_text(s, encoding='utf-8')"
+          fi
+          if [ "$MOVED" = "0" ]; then
+            echo 'nothing to move'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'refactor: 桌面代码移入 src/ 与 tests/ [skip ci]'
+          git push
+
+      - name: Show result
+        run: |
+          ls -la
+          ls -la src tests
