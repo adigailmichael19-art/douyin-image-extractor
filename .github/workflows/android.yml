@@ -86,10 +86,10 @@ jobs:
         working-directory: android
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
-          NOTES=$(printf 'Automated debug build from main.\n\n- Version: %s (%s)\n- Commit: %s\n- Signed with the Android debug key; use for personal learning and testing only.' "${{ steps.apk.outputs.version_name }}" "${{ steps.apk.outputs.version_code }}" "$GITHUB_SHA")
+          NOTES=$(printf 'Android 调试版自动构建（main 分支）。\n\n- 版本：%s（versionCode %s）\n- 提交：%s\n- 使用 Android debug 密钥签名，仅供个人学习与真机测试。' "${{ steps.apk.outputs.version_name }}" "${{ steps.apk.outputs.version_code }}" "$GITHUB_SHA")
           if gh release view android-debug >/dev/null 2>&1; then
-            gh release edit android-debug --title "Android debug APK" --notes "$NOTES"
+            gh release edit android-debug --title "Android 调试版 APK" --notes "$NOTES"
           else
-            gh release create android-debug --prerelease --title "Android debug APK" --notes "$NOTES"
+            gh release create android-debug --prerelease --title "Android 调试版 APK" --notes "$NOTES"
           fi
           gh release upload android-debug "$APK" --clobber
