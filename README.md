@@ -1,8 +1,15 @@
 # 抖音图文提取器
 
+<p>
+  <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows%20%7C%20Android-475569">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white">
+  <img alt="Android" src="https://img.shields.io/badge/Android-1.7-3DDC84?logo=android&logoColor=white">
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-2EA44F">
+</p>
+
 一个面向个人学习与技术研究的抖音内容保存工具，包含 **Windows 桌面版** 和 **原生 Android 版**。支持批量解析公开作品页面，保存图文原图、作品文案、作者信息和可选 MP4 视频；图文作品优先读取公开分享页内嵌数据，失败时用隐藏 WebView 兜底；提取成功后可自动按顺序合成独立 PDF、自动导出系统相册，也能把本地多张图片手动合并为 A4 PDF。
 
-[下载 Android APK](https://github.com/adigailmichael19-art/douyin-image-extractor/releases/download/android-debug/app-debug.apk) · [更新记录](CHANGELOG.md) · [Android 构建说明](android/README.md)
+[下载 Android APK](https://github.com/adigailmichael19-art/douyin-image-extractor/releases/download/android-debug/app-debug.apk) · [更新记录](CHANGELOG.md) · [Android 构建说明](android/README.md) · [贡献指南](CONTRIBUTING.md)
 
 > 仅供个人学习与技术研究。请遵守平台规则与适用法律，尊重原创作者版权，不要将下载内容用于未经授权的传播或商业用途。
 
@@ -17,20 +24,28 @@ Android APK 使用 Android debug 证书签名，仅供个人学习和真机测�
 
 ## 项目结构
 
+根目录只保留入口、依赖和文档，代码按用途分层：
+
 ```text
 .
-├── .github/workflows/android.yml   # Android CI：单测、lint、构建和发布
-├── android/                        # 原生 Android 工程
-│   ├── app/                        # Java 源码、布局和资源配置
-│   ├── build.gradle
-│   └── README.md
-├── douyin_gui.py                   # Windows 桌面版主程序
-├── test_douyin_gui.py              # 桌面版自动化测试
+├── src/
+│   └── douyin_gui.py               # Windows 桌面版主程序（入口 + 提取引擎 + Tkinter 界面）
+├── tests/
+│   └── test_douyin_gui.py          # 桌面版自动化测试（导入时会自动把 src/ 加入路径）
+├── tools/
+│   ├── make_github_icon.py         # 生成圆角透明图标与多尺寸 ICO
+│   └── clean_icon.py               # 旧图标清理（可选，需要根目录放 app_icon.png）
+├── android/                        # 原生 Android 工程（包名 com.douyin.extractor）
+├── .github/
+│   ├── workflows/android.yml       # Android CI：单测、lint、构建和发布
+│   ├── ISSUE_TEMPLATE/             # Issue 表单
+│   └── PULL_REQUEST_TEMPLATE.md
 ├── launch.vbs                      # Windows 静默启动器
-├── make_github_icon.py             # 图标生成脚本
-├── clean_icon.py                   # 旧图标处理脚本（可选）
 ├── requirements.txt                # 桌面版 Python 依赖
 ├── CHANGELOG.md                    # 版本变更记录
+├── CONTRIBUTING.md                 # 贡献指南
+├── SECURITY.md                     # 安全政策
+├── LICENSE                         # MIT
 └── README.md
 ```
 
@@ -64,10 +79,10 @@ Android APK 使用 Android debug 证书签名，仅供个人学习和真机测�
 
 ```powershell
 python -m pip install -r requirements.txt
-python douyin_gui.py
+python src/douyin_gui.py
 ```
 
-也可以双击 `launch.vbs` 静默启动。启动器中的程序目录和 Python 路径需要按自己的电脑修改。
+也可以双击 `launch.vbs` 静默启动。启动器会自动定位到本文件所在目录，只需把文件里的 `PYTHON_EXE` 改成你本机的 Python 路径（默认 `D:\python\python.exe`）。
 
 ### 使用步骤
 
@@ -128,10 +143,10 @@ gradle :app:assembleDebug --no-daemon
 桌面版测试：
 
 ```powershell
-python test_douyin_gui.py
+python tests/test_douyin_gui.py
 ```
 
-测试覆盖链接解析、内嵌 JSON 解析、作品对象定位、反爬识别、模拟下载、多页 PDF、透明图、EXIF 方向和 GUI 冒烟流程；抖音相关测试使用模拟会话，不会访问真实服务。
+测试覆盖链接解析、内嵌 JSON 解析、作品对象定位、反爬识别、模拟下载、多页 PDF、透明图、EXIF 方向和 GUI 冒烟流程；抖音相关测试使用模拟会话，不会访问真实服务。脚本自带路径引导，会在导入前把 `src/` 加入 `sys.path`，所以不需要设置 `PYTHONPATH`。
 
 Android 单元测试（本地 JVM，无需真机，不访问真实抖音）：
 
@@ -164,6 +179,15 @@ Android CI 位于 `.github/workflows/android.yml`，推送到 `main` 后依次�
 - 不提交 APK、AAB、签名文件、本地 SDK 路径、Cookie 或下载结果。
 - 构建产物和本地 IDE 配置由 `.gitignore` 排除。
 - 版本变化记录在 [`CHANGELOG.md`](CHANGELOG.md)。
+
+## 贡献与安全
+
+- 提交代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，里面写了环境、测试和提交信息的约定。
+- 安全问题请按 [SECURITY.md](SECURITY.md) 走私密报告，不要开公开 Issue。
+
+## 许可证
+
+本项目使用 [MIT License](LICENSE)。
 
 ## 免责声明
 
